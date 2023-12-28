@@ -1,0 +1,291 @@
+from machine import Pin
+from robust import MQTTClient
+import utime
+import time
+import _thread
+import network
+
+# Wi-Fi 配置
+ssid = 'Jne829'
+password = '33333333'
+
+# 初始化 Wi-Fi
+station = network.WLAN(network.STA_IF)
+station.active(True)
+station.connect(ssid, password)
+
+# 等待 Wi-Fi 連接
+while not station.isconnected():
+    pass
+
+print('Wi-Fi 連接成功，網絡配置：', station.ifconfig())
+
+# 初始化 GPIO 腳位
+red1 = Pin(2, Pin.OUT)    # 第一組燈的紅色通道
+yellow1 = Pin(3, Pin.OUT) # 第一組燈的黃色通道
+green1 = Pin(4, Pin.OUT)  # 第一組燈的綠色通道
+
+red2 = Pin(6, Pin.OUT)    # 第二組燈的紅色通道
+yellow2 = Pin(7, Pin.OUT) # 第二組燈的黃色通道
+green2 = Pin(8, Pin.OUT)  # 第二組燈的綠色通道
+
+button_a = Pin(10, Pin.IN, Pin.PULL_UP)
+button_b = Pin(11, Pin.IN, Pin.PULL_UP)
+button_c = Pin(12, Pin.IN, Pin.PULL_UP)
+button_d = Pin(13, Pin.IN, Pin.PULL_UP)
+
+
+# 當前指令和上一指令
+current_command = None
+last_command = None
+direction_now = 0
+direction_last = 0
+
+button_commands = {
+    button_a: ['a', 'b', 'c', 'd'],
+    button_b: ['e', 'f'],
+    button_c: ['g'],
+    button_d: ['h']
+}
+
+button_states = {
+    button_a: 1,
+    button_b: 1,
+    button_c: 1,
+    button_d: 1
+}
+
+# 閃爍燈的函數
+def blink_lights():
+    global current_command   
+    global direction_now
+    global direction_last
+    cAL()
+
+    while True:
+        loop_command = current_command
+        if current_command == 'a':
+            cAL()
+            set_traffic_lights(red1, yellow1, green1, {'red': 1, 'yellow': 0, 'green': 0})
+            set_traffic_lights(red2, yellow2, green2, {'red': 0, 'yellow': 0, 'green': 1})
+
+        elif current_command == 'b':
+            cAL()
+            set_traffic_lights(red1, yellow1, green1, {'red': 0, 'yellow': 0, 'green': 1})
+            set_traffic_lights(red2, yellow2, green2, {'red': 1, 'yellow': 0, 'green': 0})
+
+        elif current_command == 'c':
+            cAL()
+            set_traffic_lights(red1, yellow1, green1, {'red': 1, 'yellow': 0, 'green': 0})
+            set_traffic_lights(red2, yellow2, green2, {'red': 1, 'yellow': 0, 'green': 0})
+            traffic_sleep(1, loop_command)
+            cAL()
+            traffic_sleep(1, loop_command)
+
+        elif current_command == 'd':
+            cAL()
+            set_traffic_lights(red1, yellow1, green1, {'red': 0, 'yellow': 1, 'green': 0})
+            set_traffic_lights(red2, yellow2, green2, {'red': 0, 'yellow': 1, 'green': 0})
+            traffic_sleep(1, loop_command)
+            cAL()
+            traffic_sleep(1, loop_command)
+
+        elif current_command == 'e':
+            control_traffic_signals(10, 0.5, 3, 0.5, loop_command)
+
+        elif current_command == 'f':
+            control_traffic_signals(5, 0.5, 4, 0.5, loop_command)
+        elif current_command == 'g':
+            if direction_now == direction_last == 0:
+                set_traffic_lights(red1, yellow1, green1, {'red': 0, 'yellow': 0, 'green': 1})
+                set_traffic_lights(red2, yellow2, green2, {'red': 1, 'yellow': 0, 'green': 0})
+            elif direction_now == direction_last == 1:
+                set_traffic_lights(red1, yellow1, green1, {'red': 1, 'yellow': 0, 'green': 0})
+                set_traffic_lights(red2, yellow2, green2, {'red': 0, 'yellow': 0, 'green': 1})
+            elif direction_now != direction_last and direction_now == 1:
+                traffic_sleep(0.5, loop_command)
+                set_traffic_lights(red1, yellow1, green1, {'red': 0, 'yellow': 1, 'green': 0})
+                set_traffic_lights(red2, yellow2, green2, {'red': 1, 'yellow': 1, 'green': 0})
+                traffic_sleep(0.5, loop_command)
+                direction_last = 1
+            elif direction_now != direction_last and direction_now == 0:
+                traffic_sleep(0.5, loop_command)
+                set_traffic_lights(red1, yellow1, green1, {'red': 1, 'yellow': 1, 'green': 0})
+                set_traffic_lights(red2, yellow2, green2, {'red': 0, 'yellow': 1, 'green': 0})
+                traffic_sleep(0.5, loop_command)
+                direction_last = 0
+        elif current_command == 'h':
+            traffic_christmas(loop_command)
+        
+        else:
+            # 如果沒有指令，則關閉所有燈
+            cAL()
+
+        utime.sleep(0.1) # 小延時以防止佔用太多 CPU 資源
+
+# 設置交通信號燈的狀態
+def set_traffic_lights(red, yellow, green, state):
+    """設置交通信號燈的狀態"""
+    red.value(state['red'])
+    yellow.value(state['yellow'])
+    green.value(state['green'])
+
+# 關閉所有燈的函數
+def cAL():
+    red1.value(0)
+    red2.value(0)
+    yellow1.value(0)
+    yellow2.value(0)
+    green1.value(0)
+    green2.value(0)
+
+# 等待指定時間的函數
+def traffic_sleep(time, loop_command, check_interval=0.01):
+    """等待指定的時間，並定期檢查是否有新命令。"""
+    global current_command
+    for _ in range(int(time // check_interval)):
+        utime.sleep(check_interval)
+        if current_command != loop_command:
+            # 如果命令已經改變，提前結束等待
+            return
+
+    # 處理剩餘的時間（如果 time 不是 check_interval 的整數倍）
+    remaining_time = time % check_interval
+    if remaining_time:
+        utime.sleep(remaining_time)
+    
+# 控制交通信號燈時間序列的函數
+def control_traffic_signals(time1, time2, time3, time4, loop_command): # R -(time1)> R/Y -(time2)> G -(time3)> R/Y -(time4)> R
+    cAL()
+    set_traffic_lights(red1, yellow1, green1, {'red': 1, 'yellow': 0, 'green': 0})
+    set_traffic_lights(red2, yellow2, green2, {'red': 0, 'yellow': 0, 'green': 1})
+    traffic_sleep(time1, loop_command)
+
+    # 第一組燈紅色和黃色同時亮，第二組燈黃色亮
+    set_traffic_lights(red1, yellow1, green1, {'red': 1, 'yellow': 1, 'green': 0})
+    set_traffic_lights(red2, yellow2, green2, {'red': 0, 'yellow': 1, 'green': 0})
+    traffic_sleep(time2, loop_command)
+
+    # 第一組燈綠色亮，第二組燈紅色亮
+    set_traffic_lights(red1, yellow1, green1, {'red': 0, 'yellow': 0, 'green': 1})
+    set_traffic_lights(red2, yellow2, green2, {'red': 1, 'yellow': 0, 'green': 0})
+    traffic_sleep(time3, loop_command)
+
+    # 第一組燈黃色亮，第二組燈紅色和黃色同時亮
+    set_traffic_lights(red1, yellow1, green1, {'red': 0, 'yellow': 1, 'green': 0})
+    set_traffic_lights(red2, yellow2, green2, {'red': 1, 'yellow': 1, 'green': 0})
+    traffic_sleep(time4, loop_command)
+
+def traffic_christmas(loop_command):
+    light_states = [
+        ({'red': 1, 'yellow': 0, 'green': 0}, {'red': 0, 'yellow': 0, 'green': 0}),
+        ({'red': 0, 'yellow': 1, 'green': 0}, {'red': 0, 'yellow': 0, 'green': 0}),
+        ({'red': 0, 'yellow': 0, 'green': 1}, {'red': 0, 'yellow': 0, 'green': 0}),
+        ({'red': 0, 'yellow': 0, 'green': 0}, {'red': 0, 'yellow': 0, 'green': 1}),
+        ({'red': 0, 'yellow': 0, 'green': 0}, {'red': 0, 'yellow': 1, 'green': 0}),
+        ({'red': 0, 'yellow': 0, 'green': 0}, {'red': 1, 'yellow': 0, 'green': 0}),
+        
+        ({'red': 0, 'yellow': 1, 'green': 0}, {'red': 0, 'yellow': 0, 'green': 0}),
+        ({'red': 0, 'yellow': 0, 'green': 0}, {'red': 0, 'yellow': 1, 'green': 0}),
+        ({'red': 0, 'yellow': 0, 'green': 1}, {'red': 0, 'yellow': 0, 'green': 0}),
+        ({'red': 0, 'yellow': 0, 'green': 0}, {'red': 0, 'yellow': 0, 'green': 1}),
+        
+        ({'red': 0, 'yellow': 0, 'green': 1}, {'red': 0, 'yellow': 0, 'green': 0}),
+        ({'red': 0, 'yellow': 0, 'green': 0}, {'red': 0, 'yellow': 1, 'green': 0}),
+        ({'red': 0, 'yellow': 1, 'green': 0}, {'red': 0, 'yellow': 0, 'green': 0}),
+        ({'red': 0, 'yellow': 0, 'green': 0}, {'red': 1, 'yellow': 0, 'green': 0}),
+        
+        ({'red': 0, 'yellow': 0, 'green': 0}, {'red': 0, 'yellow': 1, 'green': 0}),
+        ({'red': 0, 'yellow': 0, 'green': 0}, {'red': 0, 'yellow': 0, 'green': 1}),
+        ({'red': 0, 'yellow': 0, 'green': 1}, {'red': 0, 'yellow': 0, 'green': 0}),
+        ({'red': 0, 'yellow': 1, 'green': 0}, {'red': 0, 'yellow': 0, 'green': 0}),
+        
+        ({'red': 1, 'yellow': 0, 'green': 0}, {'red': 1, 'yellow': 0, 'green': 0}),
+        ({'red': 0, 'yellow': 1, 'green': 0}, {'red': 0, 'yellow': 1, 'green': 0}),
+        ({'red': 0, 'yellow': 0, 'green': 1}, {'red': 0, 'yellow': 0, 'green': 1}),
+        ({'red': 0, 'yellow': 1, 'green': 0}, {'red': 0, 'yellow': 1, 'green': 0}),
+        ({'red': 0, 'yellow': 0, 'green': 0}, {'red': 1, 'yellow': 0, 'green': 0}),
+    ]
+
+    for state1, state2 in light_states:
+        set_traffic_lights(red1, yellow1, green1, state1)
+        set_traffic_lights(red2, yellow2, green2, state2)
+        traffic_sleep(0.125, loop_command)
+    
+
+# MQTT 參數配置
+MQTT_BROKER = "broker.emqx.io" 
+CLIENT_ID = "raspberry_pi_client"
+TOPIC = "Jne/#"
+
+# MQTT 消息處理回調函數
+def on_message(topic, msg):
+    Jnetopic = topic.decode()
+    Jnemsg = msg.decode()
+    print(f"Received: Topic = '{Jnetopic}', Message = '{Jnemsg}'")
+    
+    if Jnemsg in ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']:
+        setup_command(Jnemsg)
+
+def setup_command(command_received):
+    global current_command
+    global last_command
+    global direction_now
+    current_command = command_received
+    if current_command == last_command and current_command == 'g':
+        direction_now = 1 - direction_now
+    last_command = current_command
+    
+def button_handler(pin):
+    global button_states, current_command
+
+    current_state = pin.value()
+    last_state = button_states[pin]
+
+    if current_state == 0 and last_state == 1:  # 按键被按下
+
+        commands = button_commands[pin]
+        if current_command not in commands:
+            setup_command(commands[0])
+        else:
+            command_index = commands.index(current_command)
+            next_command = commands[(command_index + 1) % len(commands)]
+            setup_command(next_command)
+
+        button_states[pin] = 0
+        
+    elif current_state == 1 and last_state == 0:  # 按键被放开
+        button_states[pin] = 1
+
+
+
+# 設置中斷
+button_a.irq(trigger=Pin.IRQ_FALLING | Pin.IRQ_RISING, handler=button_handler)
+button_b.irq(trigger=Pin.IRQ_FALLING | Pin.IRQ_RISING, handler=button_handler)
+button_c.irq(trigger=Pin.IRQ_FALLING | Pin.IRQ_RISING, handler=button_handler)
+button_d.irq(trigger=Pin.IRQ_FALLING | Pin.IRQ_RISING, handler=button_handler)
+
+# 創建 MQTT 客戶端實例
+client = MQTTClient(CLIENT_ID, MQTT_BROKER)
+client.set_callback(on_message)
+
+# 連接到 MQTT 代理
+client.connect()
+client.subscribe(TOPIC)
+
+# 讀取命令的函數
+def read_commands():
+    global current_command
+    global last_command
+    global direction_now
+    while True:
+        client.check_msg()
+        
+
+
+# 創建並啟動閃爍燈的線程
+_thread.start_new_thread(blink_lights, ())
+
+# 主循環，用於讀取命令
+read_commands()
+
