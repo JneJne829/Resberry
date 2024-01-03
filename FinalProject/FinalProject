@@ -9,6 +9,8 @@ import network
 ssid = 'Jne829'
 password = '33333333'
 
+thread_running = True
+
 # 初始化 Wi-Fi
 station = network.WLAN(network.STA_IF)
 station.active(True)
@@ -29,10 +31,10 @@ red2 = Pin(6, Pin.OUT)    # 第二組燈的紅色通道
 yellow2 = Pin(7, Pin.OUT) # 第二組燈的黃色通道
 green2 = Pin(8, Pin.OUT)  # 第二組燈的綠色通道
 
-button_a = Pin(10, Pin.IN, Pin.PULL_UP)
+'''button_a = Pin(10, Pin.IN, Pin.PULL_UP)
 button_b = Pin(11, Pin.IN, Pin.PULL_UP)
 button_c = Pin(12, Pin.IN, Pin.PULL_UP)
-button_d = Pin(13, Pin.IN, Pin.PULL_UP)
+button_d = Pin(13, Pin.IN, Pin.PULL_UP)'''
 
 
 # 當前指令和上一指令
@@ -41,7 +43,7 @@ last_command = None
 direction_now = 0
 direction_last = 0
 
-button_commands = {
+'''button_commands = {
     button_a: ['a', 'b', 'c', 'd'],
     button_b: ['e', 'f'],
     button_c: ['g'],
@@ -53,7 +55,7 @@ button_states = {
     button_b: 1,
     button_c: 1,
     button_d: 1
-}
+}'''
 
 # 閃爍燈的函數
 def blink_lights():
@@ -62,7 +64,7 @@ def blink_lights():
     global direction_last
     cAL()
 
-    while True:
+    while thread_running:
         loop_command = current_command
         if current_command == 'a':
             cAL()
@@ -236,9 +238,10 @@ def setup_command(command_received):
         direction_now = 1 - direction_now
     last_command = current_command
     
-def button_handler(pin):
+'''def button_handler(pin):
     global button_states, current_command
-
+    
+    print('down')
     current_state = pin.value()
     last_state = button_states[pin]
 
@@ -263,7 +266,7 @@ def button_handler(pin):
 button_a.irq(trigger=Pin.IRQ_FALLING | Pin.IRQ_RISING, handler=button_handler)
 button_b.irq(trigger=Pin.IRQ_FALLING | Pin.IRQ_RISING, handler=button_handler)
 button_c.irq(trigger=Pin.IRQ_FALLING | Pin.IRQ_RISING, handler=button_handler)
-button_d.irq(trigger=Pin.IRQ_FALLING | Pin.IRQ_RISING, handler=button_handler)
+button_d.irq(trigger=Pin.IRQ_FALLING | Pin.IRQ_RISING, handler=button_handler)'''
 
 # 創建 MQTT 客戶端實例
 client = MQTTClient(CLIENT_ID, MQTT_BROKER)
@@ -274,12 +277,6 @@ client.connect()
 client.subscribe(TOPIC)
 
 # 讀取命令的函數
-def read_commands():
-    global current_command
-    global last_command
-    global direction_now
-    while True:
-        client.check_msg()
         
 
 
@@ -287,5 +284,16 @@ def read_commands():
 _thread.start_new_thread(blink_lights, ())
 
 # 主循環，用於讀取命令
-read_commands()
-
+try:
+    while True:
+        # 主程式的其他操作
+        client.check_msg()
+        pass
+except KeyboardInterrupt:
+    # 當按下Ctrl+C時
+    print("終止程式和線程...")
+    thread_running = False
+    # 可能需要等待線程安全地關閉
+    # 例如：等待一段時間或檢查某些條件
+    # ...
+    print("程式已終止。")
